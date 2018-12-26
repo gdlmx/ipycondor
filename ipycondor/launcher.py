@@ -15,6 +15,7 @@ universe             = vanilla
 executable           = {exec_cmd}
 transfer_executable  = true
 transfer_input_files ={to_send}
+should_transfer_files= yes
 
 stream_output = true
 stream_error  = true
