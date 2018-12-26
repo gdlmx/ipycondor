@@ -1,6 +1,6 @@
 from ipyparallel.apps.launcher import HTCondorLauncher, BatchClusterAppMixin
 from traitlets import (
-    Any, Integer, CFloat, List, Unicode, Dict, Instance, HasTraits, CRegExp, TraitError, validate, default
+    Any, Integer, CFloat, List, Unicode, Dict, Instance, HasTraits, CRegExp, TraitError, validate, default, observe
 )
 
 import htcondor, time, json, os, re, subprocess, ipyparallel, socket
@@ -23,7 +23,7 @@ output = ipyengine.$(ClusterId).$(ProcId).out.txt
 error  = ipyengine.$(ClusterId).$(ProcId).err.txt
 log    = ipyengine.$(ClusterId).$(ProcId).log
 
-arguments = "mpiexec --n {n} ipengine --file=ipcontroller-engine.json --cluster-id={cluster_id} --mpi --timeout=30 "
+arguments = "mpiexec --n {n} ipengine --file={name_pre}-engine.json --cluster-id={cluster_id} --mpi --timeout=30 "
 
 {requirements}
 {environments}
@@ -33,19 +33,14 @@ arguments = "mpiexec --n {n} ipengine --file=ipcontroller-engine.json --cluster-
 queue
     """ , config=True)
 
-    to_send      = List([], config=True, help="List of (local, remote) files to send before starting")
+    to_send      = List([], config=True, help="List of local files to send before starting")
 
     requirements = Unicode('', help='The requirements command in the job description file',config=True)
     environments = Unicode('', help='The environment command in the job description file', config=True)
     exec_cmd     = Unicode('ipengine_launcher',config=True)
+    name_pre = Unicode('ipcontroller')
     ssh_to_job_proc = Any()
-    context_keys = Unicode('requirements,environments,exec_cmd', config=True)
-
-    @default('to_send')
-    def _to_send_default(self):
-        _to_send=[ os.path.join(self.profile_dir, 'security', cf)
-                   for cf in ('ipcontroller-client.json', 'ipcontroller-engine.json') ]
-        return _to_send
+    context_keys = Unicode('requirements,environments,exec_cmd,name_pre', config=True)
 
     @default('exec_cmd')
     def _exec_cmd_default(self):
@@ -57,12 +52,19 @@ queue
         if v=='' or re.match('\s*\w+\s*=', v):
             return v
         raise TraitError('classad syntax error with %s'%v)
+    @observe('cluster_id')
+    def _observe_cluster_id(self, change):
+        v=change['new']
+        if v:
+            self.name_pre='ipcontroller-%s' % v
 
     def start(self, n):
-        self.context['to_send']      = ','.join(self.to_send)
-        self.context['proxy']        = ('x509UserProxy='+os.environ['X509_USER_PROXY']) if 'X509_USER_PROXY' in os.environ else ''
-        for k in self.context_keys.split(','):
-            self.context[k] = getattr(self,k)
+        prefix=lambda a,b: (a+b) if b else ''
+        self.context['proxy'] = prefix( 'x509UserProxy=', os.environ.get('X509_USER_PROXY') )
+        for k in self.context_keys.split(','):    self.context[k] = getattr(self,k)
+        _to_send = [ os.path.join(self.profile_dir, 'security', self.name_pre+'-engine.json' ) ] + self.to_send
+        assert all([os.path.exists(x) for x in _to_send]),'One or more files do not exist\n%s'%_to_send
+        self.context['to_send'] = ','.join( _to_send )
         self.log.debug("Submitting condor job with context %s", self.context)
 
         # call parent method
@@ -81,7 +83,9 @@ queue
             raise RuntimeError(err_msg)
 
         # start up a ssh tunnel
-        if self._is_alient_host:
+        remote_host = self.getjobattr('RemoteHost').split('@')[1]
+        local_host  = socket.getfqdn()
+        if remote_host.lower().find(local_host.lower())<0:
             self.create_tunnel()
         return ans
 
@@ -91,12 +95,6 @@ queue
         except:
             return 0
 
-    @property
-    def _is_alient_host(self):
-        remote_host = self.getjobattr('RemoteHost').split('@')[1]
-        local_host  = socket.getfqdn()
-        return remote_host.lower().find(local_host.lower())<0
-
     def getjobattr(self,attrname):
         val = subprocess.check_output(['condor_q', '-format','%s', attrname, str(self.job_id)])
         val = val.decode(errors='ignore')
@@ -104,7 +102,7 @@ queue
         return val
 
     def create_tunnel(self):
-        with open(os.path.join(self.profile_dir, 'security', 'ipcontroller-engine.json'), 'r') as f:
+        with open(os.path.join(self.profile_dir, 'security', self.name_pre+'-engine.json'), 'r') as f:
             stat_engine=json.load( f )
 
         args=['condor_ssh_to_job', str(self.job_id), '-N']
