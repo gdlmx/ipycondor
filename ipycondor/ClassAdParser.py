@@ -74,3 +74,61 @@ def _safe_call(f, *args):
     n = len(inspect.getargspec(f)[0])
     args = args[:n]
     return f(*args)
+
+
+class QueryParser(BaseParser):
+    """
+    Parser class for the ClassAd objects returned by `schedd.query`
+    """
+    @rule
+    def JobUniverse(value):
+        Universes={1:'standard', 5:'vanilla', 7:'scheduler', 8:'MPI', 9:'grid', 10:'java', 11:'parallel', 12:'local', 13:'vm'}
+        return Universes.get(value, 'unknown')
+
+    @rule
+    def JobStatus(value, k, clsad):
+        S=['Idle','Running','Removed','Completed','Held','Transferring Output','Suspended']
+        return S[value-1]
+
+    @rule
+    def DiskUsage(value):
+        return '{0} KB'.format(value)
+
+    @rule(r'\w*(Date|Expiration)$')
+    def timestamp2date(value):
+        import datetime
+        if isinstance(value, int) and value > 0:
+            return datetime.datetime.fromtimestamp(value)
+        else:
+            return None
+
+    @rule
+    def RemoteHost(value, k, clsad):
+        return value if value else clsad.get('LastRemoteHost','')
+
+    @rule
+    def JobId(value, key, classad):
+        return classad.get('GlobalJobId', '').split('#')[1]
+
+    @rule
+    def ExitStatus(value, key, classad):
+        if classad.get('CompletionDate','') > 0:
+            return value
+        else:
+            return None
+
+    @rule(r'\w*(Memory)$')
+    def mbyte2human(value):
+        try:
+            import humanize
+            return humanize.naturalsize(1024*1024*value, binary=True)
+        except ImportError:
+            return value
+
+    @rule(r'\w*(Disk)$')
+    def kbyte2human(value):
+        try:
+            import humanize
+            return humanize.naturalsize(1024*value, binary=True)
+        except ImportError:
+            return value

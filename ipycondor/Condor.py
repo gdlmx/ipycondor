@@ -7,8 +7,7 @@ from IPython.core.magic import (Magics, magics_class, line_magic,
                                 cell_magic, line_cell_magic)
 
 from .Qgrid import to_qgrid
-from .JobParser import JobParser
-from .MachineParser import MachineParser
+from .ClassAdParser import QueryParser
 
 from IPython.display import display, clear_output
 import ipywidgets as widgets
@@ -16,19 +15,16 @@ import ipywidgets as widgets
 from subprocess import Popen, PIPE
 import os, time
 
-def _load_magic():
-    try:
-        ip = get_ipython()
-        ip.register_magics(CondorMagics)
-    except:
-        pass
-
 _tabs = []
-def tab(title=""):
-    def _wrapper(factory):
-        _tabs.append([title, factory])
-        return factory
-    return _wrapper
+def tab(title_or_func):
+    if isinstance(title_or_func, str):
+        title = title_or_func
+        def _wrapper(factory):
+            _tabs.append([title, factory])
+            return factory
+        return _wrapper
+    else:
+        return title_or_func
 
 @magics_class
 class CondorMagics(Magics):
@@ -43,8 +39,22 @@ class CondorMagics(Magics):
         err=err.decode('utf-8','replace')
         print(out, '\n', err)
         if p.poll() == 0:
-            ui=Condor()
-            return ui.job_table(q='Owner=="{0}" && QDate > {1}'.format(username, int(time.time())-30 ))
+            return self.condor.dashboard()
+
+    @line_magic
+    def CondorMon(self,line):
+        "Display the Condor dashboard"
+        return self.condor.dashboard()
+
+    @property
+    def condor(self):
+        c = getattr(self,'_condor', None)
+        if isinstance(c, Condor):
+            c =  Condor()
+            self._condor = c
+        return c
+
+
 
 class Condor(object):
     def __init__(self, schedd_name=None):
@@ -56,6 +66,13 @@ class Condor(object):
             schedd_ad = self.coll.locate(htcondor.DaemonTypes.Schedd)
         self.schedd = htcondor.Schedd(schedd_ad)
 
+    def jobs(self, constraint=''):
+        return self.schedd.query(constraint.encode())
+
+    def machines(self, constraint=''):
+        constraint = 'MyType=="Machine"&&({0})'.format(constraint) if constraint else 'MyType=="Machine"'
+        return self.coll.query(constraint=constraint.encode())
+
     @tab("Jobs")
     def job_table(self, constraint='',
              columns=['ClusterID','ProcID','Owner','JobStatus',
@@ -64,7 +81,7 @@ class Condor(object):
         for i in index:
             if not i in columns: columns = [i] + list(columns)
         jobs = self.schedd.query(constraint.encode())
-        parser = JobParser()
+        parser = QueryParser()
         data = [[parser.parse(j, c) for c in columns] for j in jobs]
         return to_qgrid(data, columns, index)
 
@@ -75,7 +92,7 @@ class Condor(object):
             if not i in columns: columns = [i] + list(columns)
         constraint = 'MyType=="Machine"&&({0})'.format(constraint) if constraint else 'MyType=="Machine"'
         machines = self.coll.query(constraint=constraint.encode())
-        parser = MachineParser()
+        parser = QueryParser()
         data = [[parser.parse(m, c) for c in columns] for m in machines]
         return to_qgrid(data, columns, index)
 
