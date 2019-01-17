@@ -33,8 +33,11 @@ class JobParser(BaseParser):
     @rule('\w*(Date|Expiration)$')
     def timestamp2date(value):
         import datetime
-        return datetime.datetime.fromtimestamp(value) if isinstance(value, int) else None
-
+        if isinstance(value, int) and value > 0:
+            return datetime.datetime.fromtimestamp(value)
+        else:
+            return None
+    
     @rule
     def RemoteHost(value, k, clsad):
         return value if value else clsad.get('LastRemoteHost','')
