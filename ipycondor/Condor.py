@@ -1,3 +1,4 @@
+# Copyright 2019 Lukas Koschmieder
 # Copyright 2018 Mingxuan Lin
 
 from __future__ import print_function
@@ -5,7 +6,7 @@ import htcondor
 from IPython.core.magic import (Magics, magics_class, line_magic,
                                 cell_magic, line_cell_magic)
 
-from .html import to_html_table
+from .Qgrid import to_qgrid
 from .JobParser import JobParser
 
 from subprocess import Popen, PIPE
@@ -55,6 +56,4 @@ class Condor(object):
 
         jobsTab=[[jobparser.parse(j, c) for c in cols] for j in jobs ]
 
-        return to_html_table(jobsTab, cols)
-
-
+        return to_qgrid(jobsTab, cols)
