@@ -1,3 +1,4 @@
+# Copyright 2019 Lukas Koschmieder
 # Copyright 2018 Mingxuan Lin
 
 from __future__ import print_function
@@ -37,3 +38,7 @@ class JobParser(BaseParser):
     @rule
     def RemoteHost(value, k, clsad):
         return value if value else clsad.get('LastRemoteHost','')
+
+    @rule
+    def JobId(value, key, classad):
+        return classad.get('GlobalJobId', '').split('#')[1]
