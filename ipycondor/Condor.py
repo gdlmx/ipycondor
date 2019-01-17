@@ -44,14 +44,10 @@ class Condor(object):
         self.schedd = htcondor.Schedd(schedd_ad)
 
     def job_table(self, q='',
-             cols=['JobId', 'JobStartDate','Owner','JobStatus', 'JobUniverse', 'DiskUsage', 'RemoteHost']
+             columns=['JobId', 'JobStartDate','Owner','JobStatus', 'JobUniverse', 'DiskUsage', 'RemoteHost']
              ):
-
-        if not 'JobId' in cols:  cols = ['JobId'] + list(cols)
-
+        if not 'JobId' in columns:  columns = ['JobId'] + list(columns)
         jobs = self.schedd.query(q.encode())
-        jobparser = JobParser()
-
-        jobsTab=[[jobparser.parse(j, c) for c in cols] for j in jobs ]
-
-        return to_qgrid(jobsTab, cols, 'JobId')
+        parser = JobParser()
+        data = [[parser.parse(j, c) for c in columns] for j in jobs]
+        return to_qgrid(data, columns, 'JobId')
