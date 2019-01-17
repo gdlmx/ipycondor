@@ -37,7 +37,7 @@ class JobParser(BaseParser):
             return datetime.datetime.fromtimestamp(value)
         else:
             return None
-    
+
     @rule
     def RemoteHost(value, k, clsad):
         return value if value else clsad.get('LastRemoteHost','')
@@ -45,3 +45,10 @@ class JobParser(BaseParser):
     @rule
     def JobId(value, key, classad):
         return classad.get('GlobalJobId', '').split('#')[1]
+
+    @rule
+    def ExitStatus(value, key, classad):
+        if classad.get('CompletionDate','') > 0:
+            return value
+        else:
+            return None

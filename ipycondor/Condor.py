@@ -44,7 +44,9 @@ class Condor(object):
         self.schedd = htcondor.Schedd(schedd_ad)
 
     def job_table(self, q='',
-             columns=['JobId', 'JobStartDate','Owner','JobStatus', 'JobUniverse', 'DiskUsage', 'RemoteHost']
+             columns=['JobId','ClusterId','ProcId','Owner','JobStatus',
+                'QDate','JobStartDate','CompletionDate','JobUniverse',
+                'RemoteHost','ExitStatus']
              ):
         if not 'JobId' in columns:  columns = ['JobId'] + list(columns)
         jobs = self.schedd.query(q.encode())
