@@ -53,3 +53,13 @@ class Condor(object):
         parser = JobParser()
         data = [[parser.parse(j, c) for c in columns] for j in jobs]
         return to_qgrid(data, columns, ['ClusterId','ProcId'])
+
+    def machine_table(self, constraint='',
+             columns=['Machine','SlotID','Activity']):
+        if not 'SlotID' in columns: columns = ['SlotID'] + list(cols)
+        if not 'Machine' in columns: columns = ['Machine'] + list(cols)
+        constraint = 'MyType=="Machine"&&({0})'.format(constraint) if constraint else 'MyType=="Machine"'
+        machines = self.coll.query(constraint.encode())
+        parser = JobParser()
+        data = [[parser.parse(m, c) for c in columns] for m in machines]
+        return to_qgrid(data, columns, ['Machine','SlotID'])
