@@ -11,5 +11,5 @@ def to_qgrid(data, columns, index=None):
     widget = qgrid.show_grid(df, show_toolbar=False,
         grid_options={'editable':False,
                       'minVisibleRows':10,
-                      'maxVisibleRows':10})
+                      'maxVisibleRows':8})
     return widget
