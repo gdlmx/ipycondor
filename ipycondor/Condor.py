@@ -46,7 +46,7 @@ class Condor(object):
 
     def job_table(self, constraint='',
              columns=['ClusterId','ProcId','Owner','JobStatus','QDate',
-                      'JobStartDate','JobUniverse', 'RemoteHost','ExitStatus']):
+                      'JobStartDate','JobUniverse', 'RemoteHost']):
         if not 'ProcId' in columns: columns = ['ProcId'] + list(columns)
         if not 'ClusterId' in columns: columns = ['ClusterId'] + list(columns)
         jobs = self.schedd.query(constraint.encode())
@@ -63,3 +63,12 @@ class Condor(object):
         parser = MachineParser()
         data = [[parser.parse(m, c) for c in columns] for m in machines]
         return to_qgrid(data, columns, ['Machine','SlotID'])
+
+    def dashboard(self):
+        import ipywidgets as widgets
+        jobs = self.job_table()
+        machines = self.machine_table()
+        tab = widgets.Tab(children=[jobs, machines])
+        tab.set_title(0, 'Jobs')
+        tab.set_title(1, 'Machines')
+        return tab
