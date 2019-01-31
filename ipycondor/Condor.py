@@ -8,6 +8,7 @@ from IPython.core.magic import (Magics, magics_class, line_magic,
 
 from .Qgrid import to_qgrid
 from .JobParser import JobParser
+from .MachineParser import MachineParser
 
 from subprocess import Popen, PIPE
 import os, time
@@ -44,22 +45,21 @@ class Condor(object):
         self.schedd = htcondor.Schedd(schedd_ad)
 
     def job_table(self, constraint='',
-             columns=['ClusterId','ProcId','Owner','JobStatus',
-                'QDate','JobStartDate','CompletionDate','JobUniverse',
-                'RemoteHost','ExitStatus']):
-        if not 'ProcId' in columns: columns = ['ProcId'] + list(cols)
-        if not 'ClusterId' in columns: columns = ['ClusterId'] + list(cols)
+             columns=['ClusterId','ProcId','Owner','JobStatus','QDate',
+                      'JobStartDate','JobUniverse', 'RemoteHost','ExitStatus']):
+        if not 'ProcId' in columns: columns = ['ProcId'] + list(columns)
+        if not 'ClusterId' in columns: columns = ['ClusterId'] + list(columns)
         jobs = self.schedd.query(constraint.encode())
         parser = JobParser()
         data = [[parser.parse(j, c) for c in columns] for j in jobs]
         return to_qgrid(data, columns, ['ClusterId','ProcId'])
 
     def machine_table(self, constraint='',
-             columns=['Machine','SlotID','Activity']):
-        if not 'SlotID' in columns: columns = ['SlotID'] + list(cols)
-        if not 'Machine' in columns: columns = ['Machine'] + list(cols)
+             columns=['Machine','SlotID','Activity','CPUs','Memory']):
+        if not 'SlotID' in columns: columns = ['SlotID'] + list(columns)
+        if not 'Machine' in columns: columns = ['Machine'] + list(columns)
         constraint = 'MyType=="Machine"&&({0})'.format(constraint) if constraint else 'MyType=="Machine"'
-        machines = self.coll.query(constraint.encode())
-        parser = JobParser()
+        machines = self.coll.query(constraint=constraint.encode())
+        parser = MachineParser()
         data = [[parser.parse(m, c) for c in columns] for m in machines]
         return to_qgrid(data, columns, ['Machine','SlotID'])
