@@ -3,9 +3,9 @@
 import pandas as pd
 import qgrid
 
-def to_qgrid(data, columns, index):
+def to_qgrid(data, columns, index=None):
     df = pd.DataFrame(data, columns=columns)
-    df = df.set_index(index)
+    if index: df = df.set_index(index)
     widget = qgrid.show_grid(df, show_toolbar=False,
         grid_options={'editable':False})
     return widget
