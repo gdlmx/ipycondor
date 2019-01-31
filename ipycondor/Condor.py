@@ -64,7 +64,7 @@ class Condor(object):
         data = [[parser.parse(m, c) for c in columns] for m in machines]
         return to_qgrid(data, columns, ['Machine','SlotID'])
 
-    def dashboard(self):
+    def tab(self):
         import ipywidgets as widgets
         jobs = self.job_table()
         machines = self.machine_table()
@@ -72,3 +72,21 @@ class Condor(object):
         tab.set_title(0, 'Jobs')
         tab.set_title(1, 'Machines')
         return tab
+
+    def dashboard(self):
+        import ipywidgets as widgets
+        from IPython.display import display, clear_output
+        output = widgets.Output()
+        def refresh(button):
+            with output:
+                index = button.tab.selected_index if hasattr(button,'tab') else 0
+                button.tab = self.tab()
+                button.tab.selected_index = index
+                display(button.tab)
+                clear_output(wait=True)
+        refresh_btn = widgets.Button(description='Refresh', icon='refresh')
+        refresh_btn.on_click(refresh)
+        refresh(refresh_btn)
+        controls = widgets.HBox(children=[refresh_btn],
+                             layout=widgets.Layout(justify_content='flex-end'))
+        display(controls, output)
