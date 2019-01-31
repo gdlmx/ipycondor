@@ -43,13 +43,13 @@ class Condor(object):
             schedd_ad = self.coll.locate(htcondor.DaemonTypes.Schedd)
         self.schedd = htcondor.Schedd(schedd_ad)
 
-    def job_table(self, q='',
-             columns=['JobId','ClusterId','ProcId','Owner','JobStatus',
+    def job_table(self, constraint='',
+             columns=['ClusterId','ProcId','Owner','JobStatus',
                 'QDate','JobStartDate','CompletionDate','JobUniverse',
-                'RemoteHost','ExitStatus']
-             ):
-        if not 'JobId' in columns:  columns = ['JobId'] + list(columns)
-        jobs = self.schedd.query(q.encode())
+                'RemoteHost','ExitStatus']):
+        if not 'ProcId' in columns: columns = ['ProcId'] + list(cols)
+        if not 'ClusterId' in columns: columns = ['ClusterId'] + list(cols)
+        jobs = self.schedd.query(constraint.encode())
         parser = JobParser()
         data = [[parser.parse(j, c) for c in columns] for j in jobs]
-        return to_qgrid(data, columns, 'JobId')
+        return to_qgrid(data, columns, ['ClusterId','ProcId'])
