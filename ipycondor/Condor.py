@@ -6,7 +6,6 @@ import htcondor
 from IPython.core.magic import (Magics, magics_class, line_magic,
                                 cell_magic, line_cell_magic)
 
-from .Qgrid import to_qgrid
 from .ClassAdParser import QueryParser
 
 from IPython.display import display, clear_output
@@ -14,17 +13,6 @@ import ipywidgets as widgets
 
 from subprocess import Popen, PIPE
 import os, time
-
-_tabs = []
-def tab(title_or_func):
-    if isinstance(title_or_func, str):
-        title = title_or_func
-        def _wrapper(factory):
-            _tabs.append([title, factory])
-            return factory
-        return _wrapper
-    else:
-        return title_or_func
 
 @magics_class
 class CondorMagics(Magics):
@@ -50,11 +38,27 @@ class CondorMagics(Magics):
     def condor(self):
         c = getattr(self,'_condor', None)
         if isinstance(c, Condor):
-            c =  Condor()
+            c = Condor()
             self._condor = c
         return c
 
-
+def to_table(classAds, cols, key_cols = []):
+    import pandas as pd
+    import qgrid
+    columns = tuple(key_cols) + tuple(for c in cols if c not in key_cols)
+    # Parse the classAd objects from the query function
+    parser = QueryParser()
+    data = [[parser.parse(j, c) for c in columns] for j in classAds]
+    # Create QGrid table widget
+    df = pd.DataFrame(data, columns=columns)
+    if key_cols:
+        df = df.set_index(key_cols)
+        df = df.sort_index()
+    widget = qgrid.show_grid(df, show_toolbar=False,
+        grid_options={'editable':False,
+                      'minVisibleRows':10,
+                      'maxVisibleRows':8})
+    return widget
 
 class Condor(object):
     def __init__(self, schedd_name=None):
@@ -65,6 +69,7 @@ class Condor(object):
         else:
             schedd_ad = self.coll.locate(htcondor.DaemonTypes.Schedd)
         self.schedd = htcondor.Schedd(schedd_ad)
+        self._table_layout = [("Jobs", self.job_table), ("Machines", self.machine_table)]
 
     def jobs(self, constraint=''):
         return self.schedd.query(constraint.encode())
@@ -73,45 +78,31 @@ class Condor(object):
         constraint = 'MyType=="Machine"&&({0})'.format(constraint) if constraint else 'MyType=="Machine"'
         return self.coll.query(constraint=constraint.encode())
 
-    @tab("Jobs")
     def job_table(self, constraint='',
              columns=['ClusterID','ProcID','Owner','JobStatus',
                       'JobStartDate','JobUniverse', 'RemoteHost'],
              index=['ClusterID','ProcID']):
-        for i in index:
-            if not i in columns: columns = [i] + list(columns)
-        jobs = self.schedd.query(constraint.encode())
-        parser = QueryParser()
-        data = [[parser.parse(j, c) for c in columns] for j in jobs]
-        return to_qgrid(data, columns, index)
+        return to_table(self.jobs(constraint), columns, index)
 
     def slot_table(self, constraint='',
              columns=['Machine','SlotID','Activity','CPUs','Memory'],
              index=['Machine','SlotID']):
-        for i in index:
-            if not i in columns: columns = [i] + list(columns)
-        constraint = 'MyType=="Machine"&&({0})'.format(constraint) if constraint else 'MyType=="Machine"'
-        machines = self.coll.query(constraint=constraint.encode())
-        parser = QueryParser()
-        data = [[parser.parse(m, c) for c in columns] for m in machines]
-        return to_qgrid(data, columns, index)
+        return to_table(self.machines(constraint), columns, index)
 
-    @tab("Machines")
-    def machine_table(self):
-        return self.slot_table(constraint='SlotID==1||SlotID=="1_1"',
+    def machine_table(self,constraint='SlotID==1||SlotID=="1_1"',
             columns=['Machine','TotalSlots','TotalCPUs','TotalMemory',
                      'TotalDisk','TotalLoadAvg'],
-            index=['Machine'])
+            index=['Machine']):
+        return to_table(self.machines(constraint), columns, index)
 
     def tabs(self):
         tabs = []
+        _tabs = self._table_layout
         for title , factory in _tabs:
             tabs.append(factory(self))
         tab = widgets.Tab(children=tabs)
-        i = 0
-        for title , factory in _tabs:
-            tab.set_title(i, title)
-            i = i + 1
+        for i, t_f in enumerate(_tabs):
+            tab.set_title(i, t_f[0])
         return tab
 
     def dashboard(self):
