@@ -69,8 +69,8 @@ class Condor(object):
     def tab(self):
         import ipywidgets as widgets
         jobs = self.job_table()
-        machines = self.machine_table(constraint='SlotID==1',
-            columns=['Machine','TotalSlots','TotalCPUs','TotalMemory'],
+        machines = self.machine_table(constraint='SlotID==1||SlotID=="1_1"',
+            columns=['Machine','TotalSlots','TotalCPUs','TotalMemory','TotalDisk','TotalLoadAvg'],
             index=['Machine'])
         tab = widgets.Tab(children=[jobs, machines])
         tab.set_title(0, 'Jobs')
@@ -78,6 +78,7 @@ class Condor(object):
         return tab
 
     def dashboard(self):
+        import webbrowser
         import ipywidgets as widgets
         from IPython.display import display, clear_output
         output = widgets.Output()
@@ -88,9 +89,9 @@ class Condor(object):
                 button.tab.selected_index = index
                 display(button.tab)
                 clear_output(wait=True)
-        refresh_btn = widgets.Button(description='Refresh', icon='refresh')
+        refresh_btn = widgets.Button(description='Refresh', icon='refresh', button_style='')
         refresh_btn.on_click(refresh)
         refresh(refresh_btn)
         controls = widgets.HBox(children=[refresh_btn],
-                             layout=widgets.Layout(justify_content='flex-end'))
+            layout=widgets.Layout(justify_content='flex-end'))
         display(controls, output)

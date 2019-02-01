@@ -13,3 +13,11 @@ class MachineParser(BaseParser):
             return humanize.naturalsize(1024*1024*value, binary=True)
         except ImportError:
             return value
+
+    @rule('\w*(Disk)$')
+    def kbyte2human(value):
+        try:
+            import humanize
+            return humanize.naturalsize(1024*value, binary=True)
+        except ImportError:
+            return value
