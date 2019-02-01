@@ -9,11 +9,11 @@ setup(
     name='ipycondor',
     version='0.0.2',
     description='IPython binding for HTCondor',
-    author='Mingxuan Lin',
+    author='Lukas Koschmieder, Mingxuan Lin',
     license='GPL',
     packages=['ipycondor'],
     requires=['six'],
-    url='https://github.com/gdlmx/ipycondor',
+    url='https://github.com/AixViPMaP/ipycondor',
     use_2to3=True,
     include_package_data=True,
     classifiers=[

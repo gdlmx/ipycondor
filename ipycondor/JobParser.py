@@ -1,3 +1,4 @@
+# Copyright 2019 Lukas Koschmieder
 # Copyright 2018 Mingxuan Lin
 
 from __future__ import print_function
@@ -32,8 +33,22 @@ class JobParser(BaseParser):
     @rule('\w*(Date|Expiration)$')
     def timestamp2date(value):
         import datetime
-        return datetime.datetime.fromtimestamp(value) if isinstance(value, int) else None
+        if isinstance(value, int) and value > 0:
+            return datetime.datetime.fromtimestamp(value)
+        else:
+            return None
 
     @rule
     def RemoteHost(value, k, clsad):
         return value if value else clsad.get('LastRemoteHost','')
+
+    @rule
+    def JobId(value, key, classad):
+        return classad.get('GlobalJobId', '').split('#')[1]
+
+    @rule
+    def ExitStatus(value, key, classad):
+        if classad.get('CompletionDate','') > 0:
+            return value
+        else:
+            return None
