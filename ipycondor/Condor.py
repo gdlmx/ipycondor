@@ -45,29 +45,33 @@ class Condor(object):
         self.schedd = htcondor.Schedd(schedd_ad)
 
     def job_table(self, constraint='',
-             columns=['ClusterId','ProcId','Owner','JobStatus','QDate',
-                      'JobStartDate','JobUniverse', 'RemoteHost']):
-        if not 'ProcId' in columns: columns = ['ProcId'] + list(columns)
-        if not 'ClusterId' in columns: columns = ['ClusterId'] + list(columns)
+             columns=['ClusterID','ProcID','Owner','JobStatus',
+                      'JobStartDate','JobUniverse', 'RemoteHost'],
+             index=['ClusterID','ProcID']):
+        for i in index:
+            if not i in columns: columns = [i] + list(columns)
         jobs = self.schedd.query(constraint.encode())
         parser = JobParser()
         data = [[parser.parse(j, c) for c in columns] for j in jobs]
-        return to_qgrid(data, columns, ['ClusterId','ProcId'])
+        return to_qgrid(data, columns, index)
 
     def machine_table(self, constraint='',
-             columns=['Machine','SlotID','Activity','CPUs','Memory']):
-        if not 'SlotID' in columns: columns = ['SlotID'] + list(columns)
-        if not 'Machine' in columns: columns = ['Machine'] + list(columns)
+             columns=['Machine','SlotID','Activity','CPUs','Memory'],
+             index=['Machine','SlotID']):
+        for i in index:
+            if not i in columns: columns = [i] + list(columns)
         constraint = 'MyType=="Machine"&&({0})'.format(constraint) if constraint else 'MyType=="Machine"'
         machines = self.coll.query(constraint=constraint.encode())
         parser = MachineParser()
         data = [[parser.parse(m, c) for c in columns] for m in machines]
-        return to_qgrid(data, columns, ['Machine','SlotID'])
+        return to_qgrid(data, columns, index)
 
     def tab(self):
         import ipywidgets as widgets
         jobs = self.job_table()
-        machines = self.machine_table()
+        machines = self.machine_table(constraint='SlotID==1',
+            columns=['Machine','TotalSlots','TotalCPUs','TotalMemory'],
+            index=['Machine'])
         tab = widgets.Tab(children=[jobs, machines])
         tab.set_title(0, 'Jobs')
         tab.set_title(1, 'Machines')
