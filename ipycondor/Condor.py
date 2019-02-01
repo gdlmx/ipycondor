@@ -10,6 +10,8 @@ from .Qgrid import to_qgrid
 from .JobParser import JobParser
 from .MachineParser import MachineParser
 
+import ipywidgets as widgets
+
 from subprocess import Popen, PIPE
 import os, time
 
@@ -17,6 +19,16 @@ def _load_magic():
     ip = get_ipython()
     ip.register_magics(CondorMagics)
 
+class Table(object):
+    def __init__(self, func):
+        self.func=func
+
+_tabs = []
+def tab(title=""):
+    def _wrapper(factory):
+        _tabs.append([title, factory])
+        return factory
+    return _wrapper
 
 @magics_class
 class CondorMagics(Magics):
@@ -44,6 +56,7 @@ class Condor(object):
             schedd_ad = self.coll.locate(htcondor.DaemonTypes.Schedd)
         self.schedd = htcondor.Schedd(schedd_ad)
 
+    @tab("Jobs")
     def job_table(self, constraint='',
              columns=['ClusterID','ProcID','Owner','JobStatus',
                       'JobStartDate','JobUniverse', 'RemoteHost'],
@@ -55,7 +68,7 @@ class Condor(object):
         data = [[parser.parse(j, c) for c in columns] for j in jobs]
         return to_qgrid(data, columns, index)
 
-    def machine_table(self, constraint='',
+    def slot_table(self, constraint='',
              columns=['Machine','SlotID','Activity','CPUs','Memory'],
              index=['Machine','SlotID']):
         for i in index:
@@ -66,20 +79,25 @@ class Condor(object):
         data = [[parser.parse(m, c) for c in columns] for m in machines]
         return to_qgrid(data, columns, index)
 
-    def tab(self):
-        import ipywidgets as widgets
-        jobs = self.job_table()
-        machines = self.machine_table(constraint='SlotID==1||SlotID=="1_1"',
-            columns=['Machine','TotalSlots','TotalCPUs','TotalMemory','TotalDisk','TotalLoadAvg'],
+    @tab("Machines")
+    def machine_table(self):
+        return self.slot_table(constraint='SlotID==1||SlotID=="1_1"',
+            columns=['Machine','TotalSlots','TotalCPUs','TotalMemory',
+                     'TotalDisk','TotalLoadAvg'],
             index=['Machine'])
-        tab = widgets.Tab(children=[jobs, machines])
-        tab.set_title(0, 'Jobs')
-        tab.set_title(1, 'Machines')
+
+    def tabs(self):
+        tabs = []
+        for title , factory in _tabs:
+            tabs.append(factory(self))
+        tab = widgets.Tab(children=tabs)
+        i = 0
+        for title , factory in _tabs:
+            tab.set_title(i, title)
+            i = i + 1
         return tab
 
     def dashboard(self):
-        import webbrowser
-        import ipywidgets as widgets
         from IPython.display import display, clear_output
         output = widgets.Output()
         def refresh(button):
