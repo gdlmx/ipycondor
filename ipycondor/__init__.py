@@ -1,4 +1,4 @@
-# Copyright 2018 Mingxuan Lin
+# Copyright 2019 Mingxuan Lin
 
 from .Condor import CondorMagics, Condor
 
