@@ -15,9 +15,8 @@ from subprocess import Popen, PIPE
 import os, time, logging, json
 
 logger = logging.getLogger(__name__)
-logger.setLevel(logging.DEBUG)
+logger.setLevel(logging.INFO)
 ch = logging.StreamHandler()
-ch.setLevel(logging.INFO)
 logger.addHandler(ch)
 
 try:
@@ -26,32 +25,21 @@ try:
 except ImportError as ierr:
     logger.warning('Cannot import {s}\nSome functions may fail'.format(ierr))
 
-@magics_class
-class CondorMagics(Magics):
-
-    @cell_magic
-    def CondorJob(self, line, cell):
-        "Creation of a condor job"
-        username=os.environ.get('JUPYTERHUB_USER', os.environ.get('USER'))
-        p=Popen( [ 'condor_submit' ] , stdin=PIPE,stdout=PIPE, stderr=PIPE)
-        out,err = p.communicate(cell.encode('utf-8'))
-        out=out.decode('utf-8','replace')
-        err=err.decode('utf-8','replace')
-        logger.info('[%d]: %s \n%s', p.poll(), out, err)
-
-    @line_magic
-    def CondorMon(self,line):
-        "Display the Condor dashboard"
-        return self.condor.dashboard()
-
-    @property
-    def condor(self):
-        c = getattr(self,'_condor', None)
-        if not isinstance(c, Condor):
-            c = Condor()
-            self._condor = c
-        return c
-
+def my_job_id():
+    import re, os
+    p = re.compile(r'ClusterId\s+=\s+(\d+)\n')
+    try:
+        cladname = os.environ['_CONDOR_JOB_AD']
+        with open(cladname,'r') as f:
+            for line in f:
+                m = p.match(line)
+                if m:
+                    return int(m.group(1))
+            logger.error('Fail to find ClusterId attribute in file "%s"', cladname)
+            return None
+    except (IOError,KeyError) as err:
+        logger.debug('%s\nJupyterlab is not started by HTCondor.', str(err))
+        return None
 
 def deep_parse(classAds, cols=None):
     parser=QueryParser()
@@ -60,8 +48,6 @@ def deep_parse(classAds, cols=None):
     else:
         data = [{c:parser.parse(j, c) for c in j} for j in classAds]
     return json.loads(json.dumps(data,default=str))
-
-
 
 
 class TabView(object):
@@ -95,7 +81,7 @@ class TabView(object):
     @property
     def root_widget(self):
         i=ipywidgets
-        return i.VBox([i.HBox( [self.refresh_btn] ), self.grid_widget])
+        return i.VBox([i.HBox( [self.refresh_btn],  layout=i.Layout(justify_content='flex-end') ), self.grid_widget])
 
 class JobView(TabView):
     def __init__(self, f, cdr):
@@ -108,7 +94,7 @@ class JobView(TabView):
 
         act_btn = ipywidgets.Button( description='Apply' )
         act_btn.on_click(self.action)
-        self.btns = [self.act_opt, act_btn]
+        self.act_btn = [self.act_opt, act_btn]
 
     def job_action(self, job_desc):
         self._condor.job_action(self.act_opt.value, job_desc)
@@ -117,8 +103,8 @@ class JobView(TabView):
     @property
     def root_widget(self):
         i=ipywidgets
-        return i.VBox([i.HBox( [self.refresh_btn, i.Label(value=" "*30)] + self.btns ),
-                      self.grid_widget])
+        return i.VBox([i.HBox( [i.HBox(self.act_btn), self.refresh_btn  ] , layout=i.Layout(justify_content='flex-end') ),
+                       self.grid_widget])
 
 class TabPannel(object):
     _table_layout = tuple()
@@ -151,6 +137,7 @@ class Condor(TabPannel):
             schedd_ad = self.coll.locate(htcondor.DaemonTypes.Schedd)
         self.schedd = htcondor.Schedd(schedd_ad)
         self._table_layout = [("Jobs", self.job_table), ("Machines", self.machine_table)]
+        self.my_job_id = my_job_id()
 
     def jobs(self, constraint=''):
         return self.schedd.query(constraint.encode())
@@ -160,6 +147,8 @@ class Condor(TabPannel):
         return self.coll.query(constraint=constraint.encode())
 
     def job_action(self, act,  job_argv):
+        if self.my_job_id and self.my_job_id == job_argv.get('ClusterID'):
+            return
         act_args = ' && '.join([ '{}=={}'.format(k,v)  for k,v in job_argv.items() ])
         res = self.schedd.act( getattr(htcondor.JobAction, act), act_args )
         return res
@@ -193,3 +182,29 @@ class Condor(TabPannel):
                      'TotalDisk','TotalLoadAvg'],
             index=['Machine']):
         return TabView(self._wrap_tab_hdl(self.machines,constraint, columns, index)).root_widget
+
+@magics_class
+class CondorMagics(Magics):
+
+    @cell_magic
+    def CondorJob(self, line, cell):
+        "Creation of a condor job"
+        username=os.environ.get('JUPYTERHUB_USER', os.environ.get('USER'))
+        p=Popen( [ 'condor_submit' ] , stdin=PIPE,stdout=PIPE, stderr=PIPE)
+        out,err = p.communicate(cell.encode('utf-8'))
+        out=out.decode('utf-8','replace')
+        err=err.decode('utf-8','replace')
+        logger.info('[%d]: %s \n%s', p.poll(), out, err)
+
+    @line_magic
+    def CondorMon(self,line):
+        "Display the Condor dashboard"
+        return self.condor.dashboard()
+
+    @property
+    def condor(self):
+        c = getattr(self,'_condor', None)
+        if not isinstance(c, Condor):
+            c = Condor()
+            self._condor = c
+        return c
