@@ -1,18 +1,17 @@
 # Copyright 2019 Mingxuan Lin
 # Copyright 2019 Lukas Koschmieder
 
-from __future__ import print_function
+import os, time, logging, re
+from subprocess import Popen, PIPE
+
 import htcondor
-from IPython.core.magic import (Magics, magics_class, line_magic,
-                                cell_magic, line_cell_magic)
 
-from .ClassAdParser import QueryParser
+from IPython.core.magic import (Magics, magics_class, line_magic, cell_magic)
+from IPython.display import display
 
-from IPython.display import display, clear_output
 import ipywidgets
 
-from subprocess import Popen, PIPE
-import os, time, logging, json
+from .ClassAdParser import QueryParser
 
 logger = logging.getLogger(__name__)
 logger.setLevel(logging.INFO)
@@ -23,10 +22,9 @@ try:
     import pandas as pd
     import qgrid
 except ImportError as ierr:
-    logger.warning('Cannot import {s}\nSome functions may fail'.format(ierr))
+    logger.warning('Cannot import %s\nSome functions may fail',ierr)
 
 def my_job_id():
-    import re, os
     p = re.compile(r'ClusterId\s+=\s+(\d+)\n')
     try:
         cladname = os.environ['_CONDOR_JOB_AD']
@@ -116,6 +114,7 @@ class JobView(TabView):
 
 class TabPannel(object):
     _table_layout = tuple()
+    main_ui_pannel= None
     def __init__(self):
         self.log = logging.Logger(__name__ + '.TabPannel')
         self.log.setLevel(logging.INFO)
@@ -137,9 +136,7 @@ class TabPannel(object):
     def dashboard(self):
         c = getattr(self,'main_ui_pannel', None)
         if not c:
-            c = self.tabs()
-            self.main_ui_pannel = c
-
+            self.main_ui_pannel = c = self.tabs()
         display(ipywidgets.VBox([c, self.log_stack]))
 
 
@@ -176,7 +173,7 @@ class Condor(TabPannel):
         return res
 
     @staticmethod
-    def _wrap_tab_hdl(classAds_hdl, constraint, cols, key_cols = [] ):
+    def _wrap_tab_hdl(classAds_hdl, constraint, cols, key_cols = tuple() ):
         columns = tuple(key_cols) + tuple(c for c in cols if c not in key_cols)
         # Create QGrid table widget
         def getdf():
@@ -188,31 +185,31 @@ class Condor(TabPannel):
         return getdf
 
     def job_table(self, constraint='',
-             columns=['ClusterID','ProcID','Owner','JobStatus',
-                      'JobStartDate','JobUniverse', 'RemoteHost'],
-             index=['ClusterID','ProcID']):
+             columns = ('ClusterID','ProcID','Owner','JobStatus',
+                      'JobStartDate','JobUniverse', 'RemoteHost'),
+             index = ('ClusterID','ProcID')):
         return JobView(self._wrap_tab_hdl(self.jobs,constraint, columns, index), self, log=self.log).root_widget
 
     def slot_table(self, constraint='',
-             columns=['Machine','SlotID','Activity','CPUs','Memory'],
-             index=['Machine','SlotID']):
+             columns = ('Machine','SlotID','Activity','CPUs','Memory'),
+             index = ('Machine','SlotID')):
         return TabView(self._wrap_tab_hdl(self.machines,constraint, columns, index), log=self.log).root_widget
 
 
     def machine_table(self,constraint='SlotID==1||SlotID=="1_1"',
-            columns=['Machine','TotalSlots','TotalCPUs','TotalMemory',
-                     'TotalDisk','TotalLoadAvg'],
-            index=['Machine']):
+            columns = ('Machine','TotalSlots','TotalCPUs','TotalMemory',
+                     'TotalDisk','TotalLoadAvg'),
+            index = ('Machine',)):
         return TabView(self._wrap_tab_hdl(self.machines,constraint, columns, index), log=self.log).root_widget
 
 @magics_class
 class CondorMagics(Magics):
-
+    _condor = None
     @cell_magic
     def CondorJob(self, line, cell):
         "Creation of a condor job"
-        username=os.environ.get('JUPYTERHUB_USER', os.environ.get('USER'))
-        p=Popen( [ 'condor_submit' ] , stdin=PIPE,stdout=PIPE, stderr=PIPE)
+        # username = os.environ.get('JUPYTERHUB_USER', os.environ.get('USER'))
+        p = Popen( [ 'condor_submit' ] , stdin=PIPE,stdout=PIPE, stderr=PIPE)
         out,err = p.communicate(cell.encode('utf-8'))
         out=out.decode('utf-8','replace')
         err=err.decode('utf-8','replace')
