@@ -179,7 +179,7 @@ class Condor(TabPannel):
         def getdf():
             df = pd.DataFrame(deep_parse(classAds_hdl(constraint), columns), columns=columns)
             if key_cols:
-                df = df.set_index(key_cols)
+                df = df.set_index(list(key_cols))
                 df = df.sort_index()
             return df
         return getdf

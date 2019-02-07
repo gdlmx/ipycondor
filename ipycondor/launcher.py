@@ -1,12 +1,9 @@
 # Copyright 2019 Mingxuan Lin
 
-from ipyparallel.apps.launcher import HTCondorLauncher, BatchClusterAppMixin
-from traitlets import (
-    Any, Integer, CFloat, List, Unicode, Dict, Instance, HasTraits, CRegExp, TraitError, validate, default, observe
-)
-
-import htcondor, time, json, os, re, subprocess, ipyparallel, socket
-
+import time, json, os, subprocess, socket
+from ipyparallel.apps.launcher import HTCondorLauncher, BatchClusterAppMixin, ioloop
+from traitlets import (Any, Integer, List, Unicode, default)
+# CFloat,Dict, Instance, HasTraits, CRegExp, TraitError, validate, observe
 
 class HTCondorEngineSetSshLauncher(HTCondorLauncher, BatchClusterAppMixin):
     """Launch Engines using HTCondor and use condor_ssh_to_job for port forwarding"""
@@ -39,7 +36,8 @@ queue
 
     requirements = Unicode('', help='The requirements command in the job description file',config=True)
     environments = Unicode('', help='The environment command in the job description file', config=True)
-    exec_cmd     = Unicode('ipengine_launcher',config=True)
+    exec_cmd     = Unicode('ipengine_launcher', help='Remote launcher script for ipengine(s)',config=True)
+    job_timeout  = Integer(30, help='Timeout for job starting in seconds', config=True)
 
     ssh_to_job_proc = Any()
     context_keys = Unicode('requirements,environments,exec_cmd,name_pre', config=True)
@@ -47,13 +45,6 @@ queue
     @default('exec_cmd')
     def _exec_cmd_default(self):
         return os.path.join(self.profile_dir, 'ipengine_launcher')
-
-    @validate('requirements', 'environments')
-    def _valid_requirements(self,proposal):
-        v = proposal['value']
-        if v=='' or re.match('\s*\w+\s*=', v):
-            return v
-        raise TraitError('classad syntax error with %s'%v)
 
     @property
     def ipcontroller_info(self):
@@ -63,55 +54,78 @@ queue
     def name_pre(self):
         return 'ipcontroller-%s' % self.cluster_id if self.cluster_id else 'ipcontroller'
 
-
-    def start(self, n):
-
+    def _update_context(self):
         prefix=lambda a,b: (a+b) if b else ''
-        self.context['proxy'] = prefix( 'x509UserProxy=', os.environ.get('X509_USER_PROXY') )
-        for k in self.context_keys.split(','):    self.context[k] = getattr(self,k)
+
         cl_info = self.ipcontroller_info
         to_send = [ cl_info ] + self.to_send
-        self.context['to_send'] = ','.join( to_send )
-        self.log.debug("Submitting condor job with context %s", self.context)
-
         assert wait_for_new_file(cl_info), "File not found or too old %s"%cl_info
         assert all([os.path.exists(x) for x in to_send]),'One or more input file(s) do not exist\n%s'%to_send
 
-        # call parent method
+        c = {
+            'proxy':    prefix( 'x509UserProxy=', os.environ.get('X509_USER_PROXY') ) ,
+            'to_send':  ','.join( to_send )
+            }
+        c.update( {k:getattr(self,k) for k in self.context_keys.split(',')} )
+        self.context.update(c)
+
+    poller = None
+    job_submit_time = 0
+    _last_job_stat  = 0
+    def start(self, n):
+        self._update_context()
+        # call parent method to submit the job
+        self.log.debug("Submitting condor job with context %s", self.context)
         ans = super().start(n)
-
-        # wait until the job is running
-        jstatus=0
-        for k in range(30):
-            jstatus = self.poll()
-            if jstatus == 2:
-                break
-            time.sleep(1)
-        if not jstatus==2:
-            err_msg='Condor job %s failed to start (JobStatus=%s)' % (self.job_id, jstatus)
-            self.log.error(err_msg, exc_info=True)
-            raise RuntimeError(err_msg)
-
-        # start up a ssh tunnel
-        remote_host = self.getjobattr('RemoteHost').split('@')[1]
-        local_host  = socket.getfqdn()
-        if remote_host.lower().find(local_host.lower())<0:
-            self.create_tunnel()
+        # setup poller for job status
+        self.job_submit_time = time.time()
+        self._last_job_stat  = 0
+        self.poller          = ioloop.PeriodicCallback(self.poll, 1000)
+        self.poller.start()
+        self.on_stop(lambda x: self.poller.stop())
         return ans
 
     def poll(self):
+        if not  self.running: return
+        old_jstat = self._last_job_stat
+        jstat     = self._last_job_stat = self.job_stat
+        stat_changed = jstat != old_jstat
+        if stat_changed:
+            if jstat == 2: #running
+                self.poller.callback_time = 20*1000
+                if not self.job_is_local and self.ssh_stat() == 'none':
+                    self.create_tunnel()
+            elif jstat in (3, 4, 6): # stopped. No further action on the job is needed
+                self.notify_stop(jstat)
+        elif jstat != 2 and time.time() > self.job_submit_time + self.job_timeout:
+            self.log.error('Condor job %s is under %s for too long', self.job_id, jstat)
+            self.stop()
+        elif jstat == 2 and self.ssh_stat() == 'exited':
+            self.log.error('SSH tunnel is not alive. Exitting ...')
+            self.stop()
+
+    @property
+    def job_is_local(self):
+        remote_host = self.get_job_attr('RemoteHost').split('@')[1]
+        local_host  = socket.getfqdn()
+        return remote_host.lower().find(local_host.lower())>=0
+
+    @property
+    def job_stat(self):
         try:
-            return int(self.getjobattr('JobStatus'))
-        except:
+            return int(self.get_job_attr('JobStatus'))
+        except (ValueError, RuntimeError):
             return 0
 
-    def getjobattr(self,attrname):
+    def get_job_attr(self,attrname):
         val = subprocess.check_output(['condor_q', '-format','%s', attrname, str(self.job_id)])
         val = val.decode(errors='ignore')
         self.log.debug('Condor job %s: %s=%s ',self.job_id, attrname, val)
         return val
 
     def create_tunnel(self):
+        assert not self.ssh_to_job_proc
+        self.ssh_to_job_proc = 'Creating'
         with open(self.ipcontroller_info, 'r') as f:
             stat_engine=json.load( f )
 
@@ -120,20 +134,29 @@ queue
             args += ['-R', 'localhost:{0}:localhost:{0}'.format(stat_engine[k])]
 
         p=subprocess.Popen(args, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+        self.ssh_to_job_proc = p
         try:
             out,err=p.communicate(timeout=2)
+            self.ssh_to_job_proc = None
             raise RuntimeError(out,err)
         except subprocess.TimeoutExpired:
-            self.ssh_to_job_proc = p
-        self.log.info('`condor_ssh_to_job` started (PID=%d)', p.pid)
-        def stop_ssh_tunnel(r):
-            out=''
-            if p.poll() is None:
-                p.terminate()
-                out=p.communicate(timeout=1)
-            self.log.info('`condor_ssh_to_job` %s exited with %s: %s',p.pid, p.poll(), out)
+            pass
 
-        self.on_stop(stop_ssh_tunnel) # register as a callback (triggered by `notify_stop`)
+        self.log.info('`condor_ssh_to_job` started (PID=%d)', p.pid)
+        self.on_stop(self.stop_ssh_tunnel) # register as a callback (triggered by `notify_stop`)
+
+    def ssh_stat(self):
+        p = self.ssh_to_job_proc
+        if isinstance(p, subprocess.Popen):
+            return 'running' if p.poll() is None else 'exited'
+        return 'none' if not p else 'creating'
+
+    def stop_ssh_tunnel(self, cb_data=None):
+        p = self.ssh_to_job_proc
+        if self.ssh_stat() == 'running':
+            p.terminate()
+            out, err = tuple(x.decode(errors='ignore') for x in p.communicate(timeout=1))
+            self.log.debug('`condor_ssh_to_job` %s exited with %s: %s\n\t%s', p.pid, p.poll(), out, err)
 
 def wait_for_new_file(filename, timeout=20):
     for i in range(timeout):
@@ -144,4 +167,3 @@ def wait_for_new_file(filename, timeout=20):
         except FileNotFoundError:
             time.sleep(1)
     return False
-
