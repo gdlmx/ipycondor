@@ -59,7 +59,7 @@ queue
 
         cl_info = self.ipcontroller_info
         to_send = [ cl_info ] + self.to_send
-        assert wait_for_new_file(cl_info), "File not found or too old %s"%cl_info
+        assert wait_for_new_file(cl_info,3600*24), "File not found or too old %s"%cl_info
         assert all([os.path.exists(x) for x in to_send]),'One or more input file(s) do not exist\n%s'%to_send
 
         c = {
@@ -164,9 +164,10 @@ queue
             p.terminate()
             try:
                 out, err = tuple(x.decode(errors='ignore') for x in p.communicate(timeout=1))
-                self.log.debug('`condor_ssh_to_job` %s exited with %s: %s\n\t%s', p.pid, p.poll(), out, err)
+                self.log.debug('condor_ssh_to_job %s exited with %s: %s\n\t%s', p.pid, p.poll(), out, err)
             except subprocess.TimeoutExpired:
-                pass
+                self.log.error('Fail to kill condor_ssh_to_job with pid=%d, please execute `kill %d` in a console', p.pid, p.pid)
+
 
 def wait_for_new_file(filename, timeout=20):
     for i in range(timeout): #pylint: disable=W0612
