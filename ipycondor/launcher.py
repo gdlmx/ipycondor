@@ -2,81 +2,92 @@
 
 import time, json, os, subprocess, socket, io
 from ipyparallel.apps.launcher import HTCondorLauncher, BatchClusterAppMixin, ioloop
-from traitlets import (Any, Integer, List, Unicode, default)
+from IPython.utils.process import check_pid
+from traitlets import (Any, Integer, List, Set, Unicode, default)
 # CFloat,Dict, Instance, HasTraits, CRegExp, TraitError, validate, observe
+
+def prefix (a,b):
+    return (a+b) if b else ''
 
 class HTCondorEngineSetSshLauncher(HTCondorLauncher, BatchClusterAppMixin):
     """Launch Engines using HTCondor and use condor_ssh_to_job for port forwarding"""
 
     batch_file_name = Unicode('htcondor_engines.job', config=True)
     batch_template  = Unicode("""
-universe             = vanilla
-executable           = {exec_cmd}
-transfer_executable  = true
-transfer_input_files ={to_send}
-should_transfer_files= yes
+universe=vanilla
+executable={exec_cmd}
+transfer_executable=true
+transfer_input_files={files_to_send}
+should_transfer_files=yes
 
-#stream_output = true
-stream_error  = true
-#output = ipyengine.$(ClusterId).$(ProcId).out.txt
-error  = ipyengine.$(ClusterId).$(ProcId).err.txt
-log    = ipyengine.$(ClusterId).$(ProcId).log
+arguments="mpiexec --n {n} ipengine --file={name_pre}-engine.json --cluster-id={cluster_id} --mpi --timeout=30 "
 
-arguments = "mpiexec --n {n} ipengine --file={name_pre}-engine.json --cluster-id={cluster_id} --mpi --timeout=30 "
++ipengine_n={n}
 
 {requirements}
 {environments}
-{proxy}
-+ipengine_starter_n={n}
+{x509UserProxy}
+{pipes_str}
 
 queue
-    """ , config=True)
+""" , config=True)
 
     to_send      = List([], config=True, help="List of local files to send before starting")
+    to_pipe      = Set({'error','log'}, config=True, help="[output|error|log]")
 
     requirements = Unicode('', help='The requirements command in the job description file',config=True)
     environments = Unicode('', help='The environment command in the job description file', config=True)
     exec_cmd     = Unicode('ipengine_launcher', help='Remote launcher script for ipengine(s)',config=True)
     job_timeout  = Integer(30, help='Timeout for job starting in seconds', config=True)
 
+    x509UserProxy = Unicode(prefix('x509UserProxy=', os.environ.get('X509_USER_PROXY')))
     ssh_to_job_proc = Any()
-    context_keys = Unicode('requirements,environments,exec_cmd,name_pre', config=True)
+
+    _context_keys = ( 'requirements', 'environments', 'exec_cmd', 'name_pre',
+        'files_to_send', 'x509UserProxy', 'pipes_str' )
 
     @default('exec_cmd')
     def _exec_cmd_default(self):
         return os.path.join(self.profile_dir, 'ipengine_launcher')
 
     @property
-    def ipcontroller_info(self):
+    def ipcontroller_json_file(self):
         return os.path.join(self.profile_dir, 'security', self.name_pre+'-engine.json' )
 
     @property
+    def ipcontroller_pid_file(self):
+        return os.path.join(self.profile_dir, 'pid', self.name_pre + '.pid')
+
+    @property
     def name_pre(self):
-        return 'ipcontroller-%s' % self.cluster_id if self.cluster_id else 'ipcontroller'
+        return 'ipcontroller' + prefix( '-', self.cluster_id )
 
-    def _update_context(self):
-        prefix=lambda a,b: (a+b) if b else ''
+    @property
+    def files_to_send(self):
+        to_send = [ self.ipcontroller_json_file, ] + self.to_send
+        for f in to_send:
+            assert os.path.exists(f), 'File not found %s' % f
+        return ','.join( to_send )
 
-        cl_info = self.ipcontroller_info
-        to_send = [ cl_info ] + self.to_send
-        assert wait_for_new_file(cl_info,3600*24), "File not found or too old %s"%cl_info
-        assert all([os.path.exists(x) for x in to_send]),'One or more input file(s) do not exist\n%s'%to_send
-
-        c = {
-            'proxy':    prefix( 'x509UserProxy=', os.environ.get('X509_USER_PROXY') ) ,
-            'to_send':  ','.join( to_send )
-            }
-        c.update( {k:getattr(self,k) for k in self.context_keys.split(',')} )
-        self.context.update(c)
+    @property
+    def pipes_str(self):
+        a,b="stream_{0}=true\n", "{0}=ipyengine.$(ClusterId).{0}.txt\n"
+        f=lambda x: (a+b) if x in {'output', 'error'} else b if x in {'log', 'input'} else ''
+        return '\n'.join( f(p.lower()).format(p) for p in self.to_pipe )
 
     poller = None
     job_submit_time = 0
     _last_job_stat  = 0
     def start(self, n):
-        self._update_context()
+        # update context
+        assert wait_for_pid_file(self.ipcontroller_pid_file, 20), "Controller pid not found"
+        for k in self._context_keys:
+            self.context[k] = getattr(self,k)
+
         # call parent method to submit the job
         self.log.debug("Submitting condor job with context %s", self.context)
         ans = super().start(n)
+
         # setup poller for job status
         self.job_submit_time = time.time()
         self._last_job_stat  = 0
@@ -117,7 +128,7 @@ queue
     def job_stat(self):
         try:
             return int(self.get_job_attr('JobStatus'))
-        except (ValueError, RuntimeError):
+        except Exception:
             return 0
 
     def get_job_attr(self,attrname):
@@ -129,7 +140,7 @@ queue
     def create_tunnel(self):
         assert not self.ssh_to_job_proc
         self.ssh_to_job_proc = 'Creating'
-        with open(self.ipcontroller_info, 'r') as f:
+        with open(self.ipcontroller_json_file, 'r') as f:
             stat_engine=json.load( f )
 
         args=['condor_ssh_to_job', str(self.job_id), '-N', '-v', '-o', "ExitOnForwardFailure yes"]
@@ -169,14 +180,16 @@ queue
                 self.log.error('Fail to kill condor_ssh_to_job with pid=%d, please execute `kill %d` in a console', p.pid, p.pid)
 
 
-def wait_for_new_file(filename, timeout=20):
+def wait_for_pid_file(filename, timeout=20):
     for i in range(timeout): #pylint: disable=W0612
         try:
-            fileage = time.time() - os.stat(filename).st_mtime
-            if ( fileage<timeout and fileage>0 ):
-                return True
-        except FileNotFoundError:
-            time.sleep(1)
+            with open(filename, 'r') as f:
+                pid = int(f.readline())
+                if check_pid(pid):
+                    return True
+        except Exception:
+            pass
+        time.sleep(1)
     return False
 
 class SubprocPipeBuf:
