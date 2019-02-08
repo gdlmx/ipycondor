@@ -65,13 +65,13 @@ class TabView(object):
         refresh_btn.on_click(self.refresh)
         self.refresh_btn=refresh_btn
 
-    def refresh(self, *args):
+    def refresh(self, btn=None):
         try:
             self.grid_widget.df = self.f()
         except Exception as err:
             self.log.error('Fail to refresh due to an error: %s', err)
 
-    def action(self, *args):
+    def action(self, btn=None):
         """ Callback for applying action on slected rows """
         df = self.grid_widget.get_selected_df()
         idxnames = df.index.names
@@ -121,12 +121,13 @@ class IpyclusterView(TabView):
     def __init__(self, f, cdr, **argv):
         super().__init__(f,**argv)
         self._condor = cdr
-        hosts = tuple(set(m['Machine'] for m in cdr.machines()))
+
         self.exec_host_opt = ipywidgets.Dropdown(
-                options=hosts,  description='Remote host', disabled=False,
+                options=tuple(set(m['Machine'] for m in cdr.machines())),
+                description='Remote host', disabled=False,
             )
         self.profile_opt = ipywidgets.Dropdown(
-                options=('htcondor', 'default'),
+                options=self.list_profiles(),
                 description='Profile', disabled=False,
             )
         self.n_opt = ipywidgets.IntText(2, description='No. engines',
@@ -135,25 +136,52 @@ class IpyclusterView(TabView):
         self.act_btn = ipywidgets.Button( description='Start' )
         self.act_btn.on_click(self.start)
 
+        self.stop_btn = ipywidgets.Button( description='Stop' )
+        self.stop_btn.on_click(self.stop)
+
     def f_act(self, row_index):
         pass
 
-    def start(self, *args):
+    def start(self, btn):
+        profile = self.profile_opt.value
         cdr = self._condor
-        if isinstance(getattr(cdr,'ipycluster',None), NbIPClusterStart):
-            if (cdr.ipycluster.engine_launcher.running or
-                cdr.ipycluster.controller_launcher.running):
+        clusters = getattr(cdr,'ipyclusters',dict())
+        if not clusters:
+            cdr.ipyclusters = clusters
+        starter = clusters.get(profile,None)
+        if isinstance(starter, NbIPClusterStart):
+            if (starter.engine_launcher.running or
+                starter.controller_launcher.running):
+                self.log.warning('Cluster for profile %s is already running!', profile)
                 return
-        cdr.ipycluster = starter = NbIPClusterStart(log=self.log)#log=logger
-        starter.initialize(['--profile', self.profile_opt.value, '--cluster-id', 'UI'])
+        else:
+            clusters[profile] = starter = NbIPClusterStart(log=self.log)
+            starter.initialize(['--profile', profile, '--cluster-id', 'UI'])
+            self.log.info('Profile is loaded from %s with cluster-id=%s',
+                           starter.profile_dir.location, starter.cluster_id)
         starter.engine_launcher.requirements = 'requirements = ( Machine == "%s" )' % self.exec_host_opt.value
         starter.start(int(self.n_opt.value))
+
+    def stop(self, btn):
+        try:
+            self._condor.ipyclusters[self.profile_opt.value].stop_launchers()
+        except (KeyError, RuntimeError) as err:
+            self.log.error('Fail to shutdown the cluster due to %s', err)
+
+    def list_profiles(self):
+        try:
+            from IPython.paths import get_ipython_dir
+            from IPython.core.profileapp import list_profiles_in
+        except ImportError as e:
+            self.log.info("IPython not available: %s", e)
+            return ['default',]
+        return list_profiles_in(get_ipython_dir())
 
     @property
     def root_widget(self):
         i=ipywidgets
         return i.VBox([lHBox( [ self.profile_opt, self.exec_host_opt,self.n_opt, self.refresh_btn]  ),
-                       lHBox([self.act_btn]), self.grid_widget])
+                       lHBox([self.act_btn, self.stop_btn]), self.grid_widget])
 
 class TabPannel(object):
     _table_layout = tuple()
