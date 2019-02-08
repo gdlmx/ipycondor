@@ -8,6 +8,7 @@ class NbIPClusterStart(IPClusterStart):
     `ipcluster start` wraper for notebook
         start:          start controller and engines
         stop_launchers: stop controller and engines
+    Parent: https://github.com/ipython/ipyparallel/blob/master/ipyparallel/apps/ipclusterapp.py
     """
     def init_signal(self):
         pass
@@ -25,7 +26,8 @@ class NbIPClusterStart(IPClusterStart):
     def start(self, n=None):
         if isinstance(n,int):
             self.n = n #pylint: disable=W0201
-        if not self.controller_launcher.running and not self.engine_launcher.running:
+        if self.controller_launcher.state == 'before':
             self.start_controller()
             time.sleep(self.delay)
+        if self.engine_launcher.state == 'before':
             self.start_engines()
