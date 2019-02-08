@@ -34,7 +34,7 @@ def my_job_id():
                 m = p.match(line)
                 if m:
                     return int(m.group(1))
-            logger.error('Fail to find ClusterId attribute in file "%s"', cladname)
+            logger.error('Failed to find ClusterId attribute in file "%s"', cladname)
             return None
     except (IOError,KeyError) as err:
         logger.debug('%s\n\tJupyterlab is not started by HTCondor.', str(err))
@@ -69,7 +69,7 @@ class TabView(object):
         try:
             self.grid_widget.df = self.f()
         except Exception as err:
-            self.log.error('Fail to refresh due to an error: %s', err)
+            self.log.error('Failed to refresh because %s', err)
 
     def action(self, btn=None):
         """ Callback for applying action on slected rows """
@@ -105,7 +105,7 @@ class JobView(TabView):
         try:
             self._condor.job_action(act, job_desc)
         except Exception as err:
-            self.log.error('Fail to apply action %s to job %s :\n\t%s',act, job_desc, err)
+            self.log.error('Failed to apply action %s to job %s :\n\t%s',act, job_desc, err)
         else:
             self.log.info('Successfully %s job %s', act, job_desc)
         self.refresh()
@@ -143,30 +143,16 @@ class IpyclusterView(TabView):
         pass
 
     def start(self, btn):
-        profile = self.profile_opt.value
-        cdr = self._condor
-        clusters = getattr(cdr,'ipyclusters',dict())
-        if not clusters:
-            cdr.ipyclusters = clusters
-        starter = clusters.get(profile,None)
-        if isinstance(starter, NbIPClusterStart):
-            if (starter.engine_launcher.running or
-                starter.controller_launcher.running):
-                self.log.warning('Cluster for profile %s is already running!', profile)
-                return
-        else:
-            clusters[profile] = starter = NbIPClusterStart(log=self.log)
-            starter.initialize(['--profile', profile, '--cluster-id', 'UI'])
-            self.log.info('Profile is loaded from %s with cluster-id=%s',
-                           starter.profile_dir.location, starter.cluster_id)
-        starter.engine_launcher.requirements = 'requirements = ( Machine == "%s" )' % self.exec_host_opt.value
-        starter.start(int(self.n_opt.value))
+        try:
+            self._condor.start_ipcluster(self.profile_opt.value, self.n_opt.value, self.exec_host_opt.value)
+        except Exception as err:
+            self.log.error('Failed to start ipycluster with profile=%s because %s',self.profile_opt.value, err)
 
     def stop(self, btn):
         try:
             self._condor.ipyclusters[self.profile_opt.value].stop_launchers()
         except (KeyError, RuntimeError) as err:
-            self.log.error('Fail to shutdown the cluster due to %s', err)
+            self.log.error('Failed to shutdown the cluster because %s', err)
 
     def list_profiles(self):
         try:
@@ -224,6 +210,7 @@ class Condor(TabPannel):
             ("Machines", self.machine_table),
             ("IPyCluster", self.ipycluster_table)]
         self.my_job_id = my_job_id()
+        self.ipyclusters = {}
 
     def jobs(self, constraint=''):
         return self.schedd.query(constraint.encode())
@@ -242,6 +229,24 @@ class Condor(TabPannel):
             raise RuntimeError("Action %s failed with error:%s"%(act, trimedres))
         self.log.info("The job [%s] has been %sed", job_argv, act )
         return res
+
+    def start_ipcluster(self, profile, n, exec_host):
+        # Mimic: https://github.com/ipython/ipyparallel/blob/master/ipyparallel/nbextension/clustermanager.py
+        clusters = self.ipyclusters
+        starter  = clusters.get(profile,None)
+        if isinstance(starter, NbIPClusterStart):
+            if (starter.engine_launcher.running or
+                starter.controller_launcher.running):
+                self.log.warning('Cluster for profile %s is already running!', profile)
+                return
+        # Always create new starter because IPClusterApp is designed for CLI use case
+        clusters[profile] = starter = NbIPClusterStart(log=self.log)
+        starter.initialize(['--profile', profile, '--cluster-id', 'UI'])
+        self.log.info('Profile is loaded from %s with cluster-id=%s',
+                       starter.profile_dir.location, starter.cluster_id)
+
+        starter.engine_launcher.requirements = 'requirements = ( Machine == "%s" )' % exec_host
+        starter.start(int(n))
 
     @staticmethod
     def _wrap_tab_hdl(classAds_hdl, constraint, cols, key_cols = tuple() ):
@@ -276,9 +281,9 @@ class Condor(TabPannel):
             index = ('Machine',)):
         return TabView(self._wrap_tab_hdl(self.machines,constraint, columns, index), log=self.log).root_widget
 
-    def ipycluster_table(self, constraint='ipengine_starter_n > 0',
+    def ipycluster_table(self, constraint='ipengine_n > 0',
              columns = ('ClusterID','ProcID','Owner','JobStatus',
-                      'JobStartDate','ipengine_starter_n', 'RemoteHost'),
+                      'JobStartDate','ipengine_n', 'RemoteHost'),
              index = ('ClusterID','ProcID')):
         return IpyclusterView(self._wrap_tab_hdl(self.jobs,constraint, columns, index), self, log=self.log).root_widget
 
