@@ -12,6 +12,7 @@ from IPython.display import display
 import ipywidgets
 
 from .ClassAdParser import QueryParser
+from .ipcluster import NbIPClusterStart
 
 logger = logging.getLogger(__name__)
 logger.setLevel(logging.INFO)
@@ -45,7 +46,10 @@ def deep_parse(classAds, cols=None):
         data = [{c:parser.parse(j, c) for c in cols} for j in classAds]
     else:
         data = [{c:parser.parse(j, c) for c in j} for j in classAds]
-    return data
+    return data if len(data)>0 else None
+
+def lHBox (x):
+    return ipywidgets.HBox(x, layout={'justify_content':'flex-end'} )
 
 class TabView(object):
     def __init__(self, f, log=logger):
@@ -81,7 +85,7 @@ class TabView(object):
     @property
     def root_widget(self):
         i=ipywidgets
-        return i.VBox([i.HBox( [self.refresh_btn],  layout=i.Layout(justify_content='flex-end') ), self.grid_widget])
+        return i.VBox([lHBox( [self.refresh_btn] ), self.grid_widget])
 
 class JobView(TabView):
     def __init__(self, f, cdr, **argv):
@@ -109,8 +113,47 @@ class JobView(TabView):
     @property
     def root_widget(self):
         i=ipywidgets
-        return i.VBox([i.HBox( [i.HBox(self.act_btn), self.refresh_btn  ] , layout=i.Layout(justify_content='flex-end') ),
+        return i.VBox([lHBox([i.HBox(self.act_btn), self.refresh_btn  ]),
                        self.grid_widget])
+
+
+class IpyclusterView(TabView):
+    def __init__(self, f, cdr, **argv):
+        super().__init__(f,**argv)
+        self._condor = cdr
+        hosts = tuple(set(m['Machine'] for m in cdr.machines()))
+        self.exec_host_opt = ipywidgets.Dropdown(
+                options=hosts,  description='Remote host', disabled=False,
+            )
+        self.profile_opt = ipywidgets.Dropdown(
+                options=('htcondor', 'default'),
+                description='Profile', disabled=False,
+            )
+        self.n_opt = ipywidgets.IntText(2, description='No. engines',
+            layout={'width':'200px'})
+
+        self.act_btn = ipywidgets.Button( description='Start' )
+        self.act_btn.on_click(self.start)
+
+    def f_act(self, row_index):
+        pass
+
+    def start(self, *args):
+        cdr = self._condor
+        if isinstance(getattr(cdr,'ipycluster',None), NbIPClusterStart):
+            if (cdr.ipycluster.engine_launcher.running or
+                cdr.ipycluster.controller_launcher.running):
+                return
+        cdr.ipycluster = starter = NbIPClusterStart(log=self.log)#log=logger
+        starter.initialize(['--profile', self.profile_opt.value, '--cluster-id', 'UI'])
+        starter.engine_launcher.requirements = 'requirements = ( Machine == "%s" )' % self.exec_host_opt.value
+        starter.start(int(self.n_opt.value))
+
+    @property
+    def root_widget(self):
+        i=ipywidgets
+        return i.VBox([lHBox( [ self.profile_opt, self.exec_host_opt,self.n_opt, self.refresh_btn]  ),
+                       lHBox([self.act_btn]), self.grid_widget])
 
 class TabPannel(object):
     _table_layout = tuple()
@@ -139,8 +182,6 @@ class TabPannel(object):
             self.main_ui_pannel = c = self.tabs()
         display(ipywidgets.VBox([c, self.log_stack]))
 
-
-
 class Condor(TabPannel):
     def __init__(self, schedd_name=None):
         super().__init__()
@@ -151,7 +192,9 @@ class Condor(TabPannel):
         else:
             schedd_ad = self.coll.locate(htcondor.DaemonTypes.Schedd)
         self.schedd = htcondor.Schedd(schedd_ad)
-        self._table_layout = [("Jobs", self.job_table), ("Machines", self.machine_table)]
+        self._table_layout = [("Jobs", self.job_table),
+            ("Machines", self.machine_table),
+            ("IPyCluster", self.ipycluster_table)]
         self.my_job_id = my_job_id()
 
     def jobs(self, constraint=''):
@@ -177,10 +220,13 @@ class Condor(TabPannel):
         columns = tuple(key_cols) + tuple(c for c in cols if c not in key_cols)
         # Create QGrid table widget
         def getdf():
+            indx = key_cols
             df = pd.DataFrame(deep_parse(classAds_hdl(constraint), columns), columns=columns)
-            if key_cols:
-                df = df.set_index(list(key_cols))
-                df = df.sort_index()
+            if len(df)==0:
+                indx = [indx[0],]
+            if indx:
+                df.set_index(list(indx),inplace=True)
+                df.sort_index(inplace=True)
             return df
         return getdf
 
@@ -202,11 +248,17 @@ class Condor(TabPannel):
             index = ('Machine',)):
         return TabView(self._wrap_tab_hdl(self.machines,constraint, columns, index), log=self.log).root_widget
 
+    def ipycluster_table(self, constraint='ipengine_starter_n > 0',
+             columns = ('ClusterID','ProcID','Owner','JobStatus',
+                      'JobStartDate','ipengine_starter_n', 'RemoteHost'),
+             index = ('ClusterID','ProcID')):
+        return IpyclusterView(self._wrap_tab_hdl(self.jobs,constraint, columns, index), self, log=self.log).root_widget
+
 @magics_class
 class CondorMagics(Magics):
     _condor = None
     @cell_magic
-    def CondorJob(self, line, cell):
+    def CondorJob(self, line, cell): #pylint: disable=W0201
         "Creation of a condor job"
         # username = os.environ.get('JUPYTERHUB_USER', os.environ.get('USER'))
         p = Popen( [ 'condor_submit' ] , stdin=PIPE,stdout=PIPE, stderr=PIPE)
