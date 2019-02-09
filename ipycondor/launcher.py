@@ -106,7 +106,7 @@ queue
                 self.poller.callback_time = 20*1000
                 if not self.job_is_local and self.ssh_stat() == 'none':
                     try:
-                        self.create_tunnel()
+                        self.create_ssh_tunnel()
                     except: #pylint: disable=W0702
                         self.stop()
             elif jstat in (3, 4, 6): # stopped. No further action on the job is needed
@@ -137,7 +137,8 @@ queue
         self.log.debug('Condor job %s: %s=%s ',self.job_id, attrname, val)
         return val
 
-    def create_tunnel(self):
+    ssh_stderr_buf = None
+    def create_ssh_tunnel(self):
         assert not self.ssh_to_job_proc
         self.ssh_to_job_proc = 'Creating'
         with open(self.ipcontroller_json_file, 'r') as f:
@@ -160,7 +161,8 @@ queue
             raise RuntimeError(err)
         self.on_stop(self.stop_ssh_tunnel)
         #self.ssh_stderr = SubprocPipeBuf(self.loop, p, 'stderr').buf
-        SubprocPipeBuf(self.loop, p, 'stderr', lambda l: self.log.debug('[SSH] - %s', l.rstrip()))
+        self.ssh_stderr_buf = SubprocPipeBuf(self.loop, self.ssh_to_job_proc, 'stderr',
+            lambda l: self.log.debug('[SSH] - %s', l.rstrip()))
         self.log.info('condor_ssh_to_job started successfully (PID=%d)', p.pid)
 
     def ssh_stat(self):
@@ -178,6 +180,8 @@ queue
                 self.log.debug('condor_ssh_to_job %s exited with %s: %s\n\t%s', p.pid, p.poll(), out, err)
             except subprocess.TimeoutExpired:
                 self.log.error('Fail to kill condor_ssh_to_job with pid=%d, please execute `kill %d` in a console', p.pid, p.pid)
+        if self.ssh_stderr_buf:
+            self.ssh_stderr_buf.clear()
 
 
 def wait_for_pid_file(filename, timeout=20):
@@ -195,6 +199,7 @@ def wait_for_pid_file(filename, timeout=20):
 class SubprocPipeBuf:
     def __init__(self, loop, proc, pipename='stdout', line_callback=None):
         self.pipe = getattr(proc, pipename)
+        self.pipe_fileno = self.pipe.fileno()
         self.buf  = None
         if line_callback:
             self.line_callback = line_callback
@@ -206,9 +211,13 @@ class SubprocPipeBuf:
         loop.add_handler(self.pipe, self._read_handler, loop.READ)
 
     def _read_handler(self, fd, evt): #pylint: disable=W0613
-        l = self.pipe.readline().decode('utf8', 'replace')
-        if l:
-            self.line_callback(l)
-        else:
-            if self.proc.poll() is not None:
-                self.loop.remove_handler(self.pipe)
+        if not fd.closed:
+            # pipe is open
+            l = fd.readline().decode('utf8', 'replace')
+            if l: # else EOF
+                self.line_callback(l)
+                return
+        self.clear()
+
+    def clear(self):
+        return self.loop.remove_handler(self.pipe_fileno)
