@@ -84,7 +84,8 @@ class TabView(object):
             if btn.value:
                 if self.refresh_timer is None:
                     self.refresh_timer = ioloop.PeriodicCallback(self.refresh, 2000)
-                self.refresh_timer.start()
+                if not self.refresh_timer.is_running():
+                    self.refresh_timer.start()
             elif self.refresh_timer:
                 self.refresh_timer.stop()
         except Exception as err:
@@ -100,6 +101,8 @@ class TabView(object):
                 self.log.debug('Updating %s', type(self))
         except Exception as err:
             self.log.error('Failed to refresh because of %s', repr(err))
+            if self.refresh_timer:
+                self.refresh_timer.stop()
 
     def action(self, btn=None):
         """ Callback for applying action on slected rows """
