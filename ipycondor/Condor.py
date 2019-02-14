@@ -1,12 +1,10 @@
 # Copyright 2019 Mingxuan Lin
 # Copyright 2019 Lukas Koschmieder
 
-import os, time, logging, re, datetime
+import os, time, logging, re, datetime, asyncio
 from subprocess import Popen, PIPE
 
 import htcondor
-
-from zmq.eventloop import ioloop
 
 from IPython.core.magic import (Magics, magics_class, line_magic, cell_magic)
 from IPython.display import display
@@ -82,14 +80,19 @@ class TabView(object):
         try:
             assert isinstance(btn, ipywidgets.ToggleButton), 'Illegal usage of refresh_btn_handler'
             if btn.value:
-                if self.refresh_timer is None:
-                    self.refresh_timer = ioloop.PeriodicCallback(self.refresh, 2000)
-                if not self.refresh_timer.is_running():
-                    self.refresh_timer.start()
-            elif self.refresh_timer:
-                self.refresh_timer.stop()
+                self.refreshing_id = self.refreshing_id + 1
+                asyncio.ensure_future(self.periodic_refresh(self.refreshing_id, 2))
         except Exception as err:
             self.log.error('Failed switch on/off auto refresh because of %s', repr(err))
+
+    refreshing_id=0
+    async def periodic_refresh(self, id, delay=2):
+        try:
+            while self.refresh_btn.value and self.refreshing_id == id:
+                self.refresh()
+                await asyncio.sleep(delay)
+        except:
+            self.refresh_btn.value = False
 
     def refresh(self, evt=None):
         try:
@@ -101,8 +104,7 @@ class TabView(object):
                 self.log.debug('Updating %s', type(self))
         except Exception as err:
             self.log.error('Failed to refresh because of %s', repr(err))
-            if self.refresh_timer:
-                self.refresh_timer.stop()
+            raise
 
     def action(self, btn=None):
         """ Callback for applying action on slected rows """
