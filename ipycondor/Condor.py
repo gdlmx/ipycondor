@@ -23,8 +23,12 @@ try:
     import pandas as pd
     import numpy as np
     import qgrid
+    from classad import ExprTree
 except ImportError as ierr:
     logger.warning('Cannot import %s\nSome functions may fail',ierr)
+
+def classad_quote(x):
+    return re.sub(r"^'|'$",'"',repr(x))
 
 def my_job_id():
     p = re.compile(r'ClusterId\s+=\s+(\d+)\n')
@@ -109,9 +113,9 @@ class TabView(object):
     def action(self, btn=None):
         """ Callback for applying action on slected rows """
         df = self.grid_widget.get_selected_df()
-        idxnames = df.index.names
-        for idx in df.index:
-            self.f_act(dict(zip(idxnames, idx)))
+        idxframe = df.index.to_frame()
+        for i in range(len(df.index)):
+            self.f_act( idxframe.iloc[i,:].to_dict() )
 
     def f_act(self, row_index):
         """ Applying action on a row (called by self.action) """
@@ -257,11 +261,14 @@ class Condor(TabPannel):
     def job_action(self, act,  job_argv):
         if self.my_job_id and self.my_job_id == job_argv.get('ClusterID'):
             raise ValueError("This notebook is running in a condor job, which cannot kill itself!")
-        act_args = ' && '.join([ '{}=={}'.format(k,v)  for k,v in job_argv.items() ])
+        et = ExprTree('True')
+        for k,v in job_argv.items():
+            et = et.and_( ExprTree(k) == v )
+        act_args = str(et)
         res = self.schedd.act( getattr(htcondor.JobAction, act), act_args )
         if not res['TotalSuccess'] > 0:
             trimedres = {k:res[k] for k in res if res[k]>0}
-            raise RuntimeError("Action %s failed with error:%s"%(act, trimedres))
+            raise RuntimeError("Action %s with constraint %s failed with error:%s"%(act, act_args, trimedres))
         self.log.info("The job [%s] has been %sed", job_argv, act )
         return res
 
