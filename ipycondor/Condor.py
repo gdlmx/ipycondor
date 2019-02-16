@@ -103,7 +103,7 @@ class TabView(object):
             self.updated_at.value = '<i>%s</i>' % datetime.datetime.now()
             df0 = self.grid_widget.df
             df  = self.f()
-            if not np.array_equal(df0,df):
+            if not df0.equals(df):
                 self.grid_widget.df = df
                 self.log.debug('Updating %s', type(self))
         except Exception as err:
@@ -306,7 +306,7 @@ class Condor(TabPannel):
         return getdf
 
     def job_table(self, constraint='',
-             columns = ('ClusterID','ProcID','Owner','JobStatus',
+             columns = ('ClusterID','ProcID','Owner','JobStatus','JobDescription',
                       'JobStartDate','JobUniverse', 'RemoteHost'),
              index = ('ClusterID','ProcID')):
         return JobView(self._wrap_tab_hdl(self.jobs,constraint, columns, index), self, log=self.log).root_widget
