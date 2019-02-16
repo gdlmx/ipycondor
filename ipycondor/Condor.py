@@ -21,14 +21,10 @@ logger.addHandler(ch)
 
 try:
     import pandas as pd
-    import numpy as np
     import qgrid
     from classad import ExprTree
 except ImportError as ierr:
     logger.warning('Cannot import %s\nSome functions may fail',ierr)
-
-def classad_quote(x):
-    return re.sub(r"^'|'$",'"',repr(x))
 
 def my_job_id():
     p = re.compile(r'ClusterId\s+=\s+(\d+)\n')
@@ -90,9 +86,9 @@ class TabView(object):
             self.log.error('Failed switch on/off auto refresh because of %s', repr(err))
 
     refreshing_id=0
-    async def periodic_refresh(self, id, delay=2):
+    async def periodic_refresh(self, refreshing_id, delay=2):
         try:
-            while self.refresh_btn.value and self.refreshing_id == id:
+            while self.refresh_btn.value and self.refreshing_id == refreshing_id:
                 self.refresh()
                 await asyncio.sleep(delay)
         except:
@@ -333,7 +329,7 @@ class Condor(TabPannel):
 class CondorMagics(Magics):
     _condor = None
     @cell_magic
-    def CondorJob(self, line, cell): #pylint: disable=W0201
+    def CondorJob(self, line, cell): #pylint: disable=R0201
         "Creation of a condor job"
         # username = os.environ.get('JUPYTERHUB_USER', os.environ.get('USER'))
         p = Popen( [ 'condor_submit' ] , stdin=PIPE,stdout=PIPE, stderr=PIPE)
